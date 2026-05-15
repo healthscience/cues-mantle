@@ -1,15 +1,17 @@
 use wasmtime::{Engine, Linker, Module, Store, Instance, TypedFunc};
 use anyhow::Result;
 
+pub const HELI_WASM: &[u8] = include_bytes!("../../static/heli.wasm");
+
 pub struct HeliRuntime {
     store: Store<()>,
     instance: Instance,
 }
 
 impl HeliRuntime {
-    pub fn new(wasm_bytes: &[u8]) -> Result<Self> {
+    pub fn new() -> Result<Self> {
         let engine = Engine::default();
-        let module = Module::new(&engine, wasm_bytes)?;
+        let module = Module::new(&engine, HELI_WASM)?;
         
         let mut store = Store::new(&engine, ());
         let mut linker = Linker::new(&engine);
