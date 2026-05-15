@@ -145,7 +145,7 @@ impl State {
         surface.configure(&device, &config);
 
         // Heli Runtime setup
-        let mut heli_runtime = HeliRuntime::new("assets/heli_clock_bg.wasm").expect("Failed to initialize Heli WASM");
+        let mut heli_runtime = HeliRuntime::new(include_bytes!("../assets/heli_clock_bg.wasm")).expect("Failed to initialize Heli WASM");
 
         // Text setup
         let mut font_system = FontSystem::new();

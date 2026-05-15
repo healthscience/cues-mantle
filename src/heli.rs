@@ -1,6 +1,5 @@
 use wasmtime::{Engine, Linker, Module, Store, Instance, TypedFunc};
 use anyhow::Result;
-use std::fs;
 
 pub struct HeliRuntime {
     store: Store<()>,
@@ -8,10 +7,9 @@ pub struct HeliRuntime {
 }
 
 impl HeliRuntime {
-    pub fn new(wasm_path: &str) -> Result<Self> {
+    pub fn new(wasm_bytes: &[u8]) -> Result<Self> {
         let engine = Engine::default();
-        let wasm_bytes = fs::read(wasm_path)?;
-        let module = Module::new(&engine, &wasm_bytes[..])?;
+        let module = Module::new(&engine, wasm_bytes)?;
         
         let mut store = Store::new(&engine, ());
         let mut linker = Linker::new(&engine);
