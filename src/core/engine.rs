@@ -132,10 +132,17 @@ impl Engine {
 
         let (solar_status, mut clear_color) = Self::get_solar_status(self.heli_runtime.as_mut(), self.test_mode);
 
-        // Override clear color if impulse file has set it
+        // Override clear color if impulse file has set it via shared substrate buffer
         if let Some(js) = &self.js_runtime {
-            if let Some(override_color) = js.get_clear_color() {
-                clear_color = override_color;
+            let substrate = js.read_substrate_floats();
+            // If the alpha channel (slot 3) is set, we use the JS-driven color
+            if substrate[3] > 0.0 {
+                clear_color = wgpu::Color {
+                    r: substrate[0] as f64,
+                    g: substrate[1] as f64,
+                    b: substrate[2] as f64,
+                    a: substrate[3] as f64,
+                };
             }
         }
 

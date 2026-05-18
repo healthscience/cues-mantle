@@ -156,7 +156,6 @@ impl MantleRuntime {
             let substrate_ptr = std::alloc::alloc_zeroed(substrate_layout);
 
             // Task 2.4: Morphogenetic Sorting & Coherence Ledger
-            // Simulated Hypercore buffer (1024 bytes)
             let ledger_size = 1024;
             let ledger_layout = std::alloc::Layout::from_size_align(ledger_size, 16).unwrap();
             let ledger_ptr = std::alloc::alloc_zeroed(ledger_layout);
@@ -191,24 +190,6 @@ impl MantleRuntime {
             let substrate_name = CString::new("substrate").unwrap();
             js_set_named_property(env, buffers, substrate_name.as_ptr(), substrate_array_buffer);
 
-            // Task 2.2: Substrate Discovery API
-            let mut schema: *mut js_value_t = ptr::null_mut();
-            js_create_object(env, &mut schema);
-            let schema_name = CString::new("schema").unwrap();
-            js_set_named_property(env, hop, schema_name.as_ptr(), schema);
-
-            let substrate_info = CString::new("Byte 0-4095: Substrate Buffer").unwrap();
-            let mut substrate_info_val: *mut js_value_t = ptr::null_mut();
-            js_create_string_utf8(env, substrate_info.as_ptr(), substrate_info.to_bytes().len(), &mut substrate_info_val);
-            let substrate_key = CString::new("substrate").unwrap();
-            js_set_named_property(env, schema, substrate_key.as_ptr(), substrate_info_val);
-
-            // Task 2.3: Conduction Proxy Interface
-            let mut proxy: *mut js_value_t = ptr::null_mut();
-            js_create_object(env, &mut proxy);
-            let proxy_name = CString::new("proxy").unwrap();
-            js_set_named_property(env, hop, proxy_name.as_ptr(), proxy);
-
             // Coherence Ledger Buffer in JS
             let mut ledger_array_buffer: *mut js_value_t = ptr::null_mut();
             js_create_external_arraybuffer(
@@ -223,6 +204,22 @@ impl MantleRuntime {
             let ledger_name = CString::new("ledger").unwrap();
             js_set_named_property(env, buffers, ledger_name.as_ptr(), ledger_array_buffer);
 
+            // Wire the JS-side Plumbing for hop.render.setClearColor
+            let bootstrap_js = r#"
+                (function() {
+                    const substrateView = new Float32Array(hop.buffers.substrate);
+                    hop.render = {
+                        setClearColor: (r, g, b, a) => {
+                            substrateView[0] = r;
+                            substrateView[1] = g;
+                            substrateView[2] = b;
+                            substrateView[3] = a;
+                        }
+                    };
+                })();
+            "#;
+            runtime.execute_string(bootstrap_js).ok();
+
             Ok(runtime)
         }
     }
@@ -233,6 +230,12 @@ impl MantleRuntime {
 
     pub fn get_substrate_size(&self) -> usize {
         self.substrate_size
+    }
+
+    pub fn read_substrate_floats(&self) -> &[f32] {
+        unsafe {
+            std::slice::from_raw_parts(self.substrate_ptr as *const f32, self.substrate_size / 4)
+        }
     }
 
     pub fn execute_string(&mut self, source: &str) -> anyhow::Result<()> {
@@ -286,11 +289,6 @@ impl MantleRuntime {
         let _ = self.tick_engine();
     }
 
-    pub fn get_clear_color(&self) -> Option<wgpu::Color> {
-        // Placeholder for future impulse-driven state
-        None
-    }
-
     pub fn tick_engine_with_timeout(&mut self, timeout: std::time::Duration) -> anyhow::Result<()> {
         if timeout.as_millis() < 5 {
              return Err(anyhow::anyhow!("Execution terminated by Watchdog Guard"));
@@ -316,11 +314,6 @@ impl MantleRuntime {
 
     pub fn env(&self) -> *mut js_env_t {
         self.env
-    }
-
-    pub fn set_clear_color(&mut self, r: f64, g: f64, b: f64, a: f64) {
-        // This will be expanded once we have the clear color state in MantleRuntime
-        log::info!("Mantle Impulse: setClearColor({}, {}, {}, {})", r, g, b, a);
     }
 }
 

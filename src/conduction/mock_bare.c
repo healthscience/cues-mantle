@@ -48,3 +48,8 @@ int js_run_script(js_env_t* env, const char* filename, size_t filename_len, int 
     *result = (js_value_t*)0x9;
     return 0;
 }
+
+int js_create_function(js_env_t* env, const char* name, size_t name_len, const void* cb, void* cb_data, js_value_t** result) {
+    *result = (js_value_t*)0xA;
+    return 0;
+}
