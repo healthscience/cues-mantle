@@ -39,6 +39,7 @@ pub struct Engine {
     pub particle_buffer: Option<wgpu::Buffer>,
     pub test_mode: TestMode,
     pub boot_start: std::time::Instant,
+    pub impulse_rx: Option<std::sync::mpsc::Receiver<String>>,
 }
 
 impl Engine {
@@ -75,6 +76,7 @@ impl Engine {
             particle_buffer: None,
             test_mode,
             boot_start: std::time::Instant::now(),
+            impulse_rx: None,
         }
     }
 
@@ -111,6 +113,18 @@ impl Engine {
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+        // 0. Check for inbound script impulses waiting in the conduction channel
+        if let Some(rx) = &self.impulse_rx {
+            if let Ok(incoming_script) = rx.try_recv() {
+                if let Some(js) = &mut self.js_runtime {
+                    log::info!("Main Render Thread: Fusing incoming impulse into active Isolate context");
+                    if let Err(e) = js.execute_string(&incoming_script) {
+                        log::error!(" Catastrophic Exception: IMPULSE CRASH DETECTED: {:?}", e);
+                    }
+                }
+            }
+        }
+
         // 1. Check if we are still booting
         if self.js_runtime.is_none() || self.bridge.is_none() {
             return self.render_booting();
@@ -135,6 +149,12 @@ impl Engine {
         // Override clear color if impulse file has set it via shared substrate buffer
         if let Some(js) = &self.js_runtime {
             let substrate = js.read_substrate_floats();
+            
+            // TEMPORARY SMOKE LOG
+            if substrate[0] != 0.0 || substrate[1] != 0.0 || substrate[2] != 0.0 || substrate[3] != 0.0 {
+                log::info!("Substrate Color Vector Read: {:?}", &substrate[0..4]);
+            }
+
             // If the alpha channel (slot 3) is set, we use the JS-driven color
             if substrate[3] > 0.0 {
                 clear_color = wgpu::Color {

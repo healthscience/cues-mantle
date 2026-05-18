@@ -267,7 +267,9 @@ impl MantleRuntime {
             );
 
             if res != 0 {
-                return Err(anyhow::anyhow!("JavaScript execution failed with code: {}", res));
+                let err_msg = format!("JavaScript execution failed with code: {}", res);
+                log::error!("{}", err_msg);
+                return Err(anyhow::anyhow!(err_msg));
             }
         }
         Ok(())

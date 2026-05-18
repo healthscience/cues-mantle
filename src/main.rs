@@ -20,6 +20,7 @@ struct App {
     engine: Option<Engine>,
     test_mode: TestMode,
     receiver: Option<Receiver<RuntimeAssets>>,
+    impulse_tx: Option<std::sync::mpsc::Sender<String>>,
 }
 
 impl App {
@@ -29,6 +30,7 @@ impl App {
             engine: None,
             test_mode,
             receiver: None,
+            impulse_tx: None,
         }
     }
 }
@@ -40,16 +42,23 @@ impl ApplicationHandler for App {
             self.window_surface = Some(window_surface);
 
             if let Some(ws) = &self.window_surface {
-                let engine = pollster::block_on(Engine::new(ws.window.clone(), self.test_mode));
+                let mut engine = pollster::block_on(Engine::new(ws.window.clone(), self.test_mode));
+                
+                // Define the Conduction Channel
+                let (itx, irx) = channel::<String>();
+                engine.impulse_rx = Some(irx);
+                self.impulse_tx = Some(itx.clone());
+                
                 self.engine = Some(engine);
                 ws.window.request_redraw();
                 
                 // Spawn background loader
                 let (tx, rx) = channel();
                 self.receiver = Some(rx);
+                let itx_clone = itx.clone();
                 
                 std::thread::spawn(move || {
-                    log::info!("Background Loader: Igniting Mantle & Heli...");
+                    log::info!("Background Loader: Injecting mantle.js impulse...");
                     
                     let heli = HeliRuntime::new().expect("Failed to initialize Heli WASM");
                     let mut js = MantleRuntime::new().expect("Failed to initialize Mantle JS");
@@ -63,10 +72,17 @@ impl ApplicationHandler for App {
                     bridge.inject(js.env()).expect("Failed to inject bridge");
                     js.load("assets/particles.js").ok();
                     
-                    // Load the first local impulse file
-                    if let Ok(mantle_js) = std::fs::read_to_string("target/release/mantle.js") {
-                        log::info!("Background Loader: Injecting mantle.js impulse...");
-                        let _ = js.execute_string(&mantle_js);
+                    // Load the first local impulse file via Conduction Channel
+                    let script_path = "target/release/mantle.js";
+                    match std::fs::read_to_string(script_path) {
+                        Ok(script_content) => {
+                            if let Err(e) = itx_clone.send(script_content) {
+                                log::error!("Failed to route mantle.js payload to conduction channel: {:?}", e);
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("Could not read mantle.js at {}: {:?}", script_path, e);
+                        }
                     }
                     
                     let _ = tx.send(RuntimeAssets { heli, js, bridge });
