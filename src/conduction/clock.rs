@@ -10,12 +10,17 @@ pub struct HeliRuntime {
 
 impl HeliRuntime {
     pub fn new() -> Result<Self> {
-        let engine = Engine::default();
+        let mut config = wasmtime::Config::new();
+        config.cranelift_opt_level(wasmtime::OptLevel::None);
+        config.strategy(wasmtime::Strategy::Cranelift);
+        config.parallel_compilation(true);
+        
+        let engine = Engine::new(&config)?;
         let module = Module::new(&engine, HELI_WASM)?;
         
         let mut store = Store::new(&engine, ());
         let mut linker = Linker::new(&engine);
-        
+
         // Mock wasm-bindgen imports
         linker.func_wrap("./heli_clock_bg.js", "__wbg___wbindgen_throw_be289d5034ed271b", |_arg0: i32, _arg1: i32| {
         })?;

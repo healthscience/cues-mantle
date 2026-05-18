@@ -6,7 +6,7 @@ use glyphon::{
 };
 use chrono::Utc;
 use crate::conduction::clock::HeliRuntime;
-use crate::conduction::runtime::{JsRuntime, uv_default_loop};
+use crate::conduction::runtime::{MantleRuntime};
 use crate::conduction::bridge::{Bridge, Particle};
 use crate::render::pipeline::RenderPipeline;
 use crate::{NETWORK_GENESIS_MS, TROPICAL_YEAR_MS};
@@ -31,40 +31,21 @@ pub struct Engine {
     pub text_renderer: TextRenderer,
     pub text_buffer: Buffer,
 
-    // Conduction
-    pub heli_runtime: HeliRuntime,
-    pub js_runtime: JsRuntime,
-    pub bridge: Bridge,
+    // Conduction (now optional for instant startup)
+    pub heli_runtime: Option<HeliRuntime>,
+    pub js_runtime: Option<MantleRuntime>,
+    pub bridge: Option<Bridge>,
     
-    pub particle_buffer: wgpu::Buffer,
+    pub particle_buffer: Option<wgpu::Buffer>,
     pub test_mode: TestMode,
+    pub boot_start: std::time::Instant,
 }
 
 impl Engine {
     pub async fn new(window: Arc<Window>, test_mode: TestMode) -> Self {
         let size = window.inner_size();
         let render_pipeline = RenderPipeline::new(window).await;
-
-        // Conduction Setup
-        let mut heli_runtime = HeliRuntime::new().expect("Failed to initialize Heli WASM");
         
-        let uv_loop = unsafe { uv_default_loop() };
-        let mut js_runtime = JsRuntime::new(uv_loop).expect("Failed to initialize bare-js");
-        
-        let bridge = Bridge::new(100);
-        bridge.inject(js_runtime.env()).expect("Failed to inject bridge into JS");
-        
-        // Load particle logic
-        js_runtime.load("assets/particles.js").ok(); // Optional for now
-
-        // GPU Buffer for particles
-        let particle_buffer = render_pipeline.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Particle Buffer"),
-            size: (bridge.particles.len() * std::mem::size_of::<Particle>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         // Text setup
         let mut font_system = FontSystem::new();
         let swash_cache = SwashCache::new();
@@ -74,9 +55,9 @@ impl Engine {
         let text_renderer = TextRenderer::new(&mut atlas, &render_pipeline.device, Default::default(), None);
         let mut text_buffer = Buffer::new(&mut font_system, Metrics::new(32.0, 42.0));
 
-        let (status, _bg) = Self::get_solar_status(&mut heli_runtime, test_mode);
+        // Initial placeholder text for instant feedback
         text_buffer.set_size(&mut font_system, Some(size.width as f32), Some(size.height as f32));
-        text_buffer.set_text(&mut font_system, &status, glyphon::Attrs::new().family(glyphon::Family::SansSerif), cosmic_text::Shaping::Advanced);
+        text_buffer.set_text(&mut font_system, "bring to be ...", glyphon::Attrs::new().family(glyphon::Family::SansSerif), cosmic_text::Shaping::Advanced);
         text_buffer.shape_until_scroll(&mut font_system, false);
 
         Self {
@@ -88,12 +69,32 @@ impl Engine {
             atlas,
             text_renderer,
             text_buffer,
-            heli_runtime,
-            js_runtime,
-            bridge,
-            particle_buffer,
+            heli_runtime: None, 
+            js_runtime: None,
+            bridge: None,
+            particle_buffer: None,
             test_mode,
+            boot_start: std::time::Instant::now(),
         }
+    }
+
+    pub fn activate(&mut self, heli: HeliRuntime, js: MantleRuntime, bridge: Bridge) {
+        use crate::conduction::bridge::Particle;
+        
+        // GPU Buffer for particles
+        let particle_buffer = self.render_pipeline.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Particle Buffer"),
+            size: (bridge.particles.len() * std::mem::size_of::<Particle>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        self.heli_runtime = Some(heli);
+        self.js_runtime = Some(js);
+        self.bridge = Some(bridge);
+        self.particle_buffer = Some(particle_buffer);
+        
+        log::info!("Engine Activated: Components integrated.");
     }
 
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
@@ -110,19 +111,36 @@ impl Engine {
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        // 1. Metabolic Phase / JS Tick
-        self.js_runtime.tick();
+        // 1. Check if we are still booting
+        if self.js_runtime.is_none() || self.bridge.is_none() {
+            return self.render_booting();
+        }
 
-        // 2. Conduction Phase: Sync Bridge to GPU
-        self.render_pipeline.queue.write_buffer(
-            &self.particle_buffer,
-            0,
-            bytemuck::cast_slice(&self.bridge.particles),
-        );
+        // 2. Metabolic Phase / JS Tick
+        if let Some(js) = &mut self.js_runtime {
+            js.tick();
+        }
 
-        let (solar_status, clear_color) = Self::get_solar_status(&mut self.heli_runtime, self.test_mode);
+        // 3. Conduction Phase: Sync Bridge to GPU
+        if let (Some(bridge), Some(pb)) = (&self.bridge, &self.particle_buffer) {
+            self.render_pipeline.queue.write_buffer(
+                pb,
+                0,
+                bytemuck::cast_slice(&bridge.particles),
+            );
+        }
+
+        let (solar_status, mut clear_color) = Self::get_solar_status(self.heli_runtime.as_mut(), self.test_mode);
+
+        // Override clear color if impulse file has set it
+        if let Some(js) = &self.js_runtime {
+            if let Some(override_color) = js.get_clear_color() {
+                clear_color = override_color;
+            }
+        }
 
         let output = self.render_pipeline.surface.get_current_texture()?;
+
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -183,7 +201,81 @@ impl Engine {
         Ok(())
     }
 
-    fn get_solar_status(heli: &mut HeliRuntime, test_mode: TestMode) -> (String, wgpu::Color) {
+    fn render_booting(&mut self) -> Result<(), wgpu::SurfaceError> {
+        let elapsed = self.boot_start.elapsed().as_secs_f32();
+        let pulse = (elapsed * 2.0).sin() * 0.5 + 0.5;
+        
+        let clear_color = wgpu::Color {
+            r: 0.02 * pulse as f64,
+            g: 0.02 * pulse as f64,
+            b: 0.05 * pulse as f64,
+            a: 1.0,
+        };
+
+        let output = self.render_pipeline.surface.get_current_texture()?;
+        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self.render_pipeline.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Boot Encoder") });
+
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Boot Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(clear_color),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+
+            self.text_buffer.set_text(&mut self.font_system, "bring to be ...", glyphon::Attrs::new().family(glyphon::Family::SansSerif), cosmic_text::Shaping::Advanced);
+            self.text_renderer.prepare(
+                &self.render_pipeline.device,
+                &self.render_pipeline.queue,
+                &mut self.font_system,
+                &mut self.atlas,
+                &self.viewport,
+                [TextArea {
+                    buffer: &self.text_buffer,
+                    left: 40.0,
+                    top: 40.0,
+                    scale: 1.0,
+                    bounds: glyphon::TextBounds {
+                        left: 0,
+                        top: 0,
+                        right: self.size.width as i32,
+                        bottom: self.size.height as i32,
+                    },
+                    default_color: Color::rgb(200, 200, 255),
+                    custom_glyphs: &[],
+                }],
+                &mut self.swash_cache,
+            ).unwrap();
+
+            self.text_renderer.render(&self.atlas, &self.viewport, &mut render_pass).unwrap();
+        }
+
+        self.render_pipeline.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+        Ok(())
+    }
+
+    pub fn get_solar_status(heli: Option<&mut HeliRuntime>, test_mode: TestMode) -> (String, wgpu::Color) {
+        use crate::{NETWORK_GENESIS_MS, TROPICAL_YEAR_MS};
+        use chrono::Utc;
+
+        if heli.is_none() {
+            return (
+                "Cues Mantle | Age: ??? | Temporal Axis Initializing...".to_string(),
+                wgpu::Color { r: 0.05, g: 0.05, b: 0.1, a: 1.0 }
+            );
+        }
+        let heli = heli.unwrap();
+
         let now = match test_mode {
             TestMode::SolarNoon => NETWORK_GENESIS_MS, 
             TestMode::SolarMidnight => NETWORK_GENESIS_MS + (12 * 3600 * 1000), 
@@ -199,7 +291,7 @@ impl Engine {
         
         let is_day = zenith < 90.0;
 
-        let factor = (1.0 - (zenith / 180.0)).powi(2);
+        let factor = (1.0f64 - (zenith / 180.0)).powi(2);
         let background_color = if is_day {
             wgpu::Color {
                 r: 0.1 * factor,

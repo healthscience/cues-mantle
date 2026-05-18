@@ -38,3 +38,13 @@ int js_create_external_arraybuffer(js_env_t* env, void* data, size_t byte_length
     *result = (js_value_t*)0x7;
     return 0;
 }
+
+int js_create_string_utf8(js_env_t* env, const char* str, size_t length, js_value_t** result) {
+    *result = (js_value_t*)0x8;
+    return 0;
+}
+
+int js_run_script(js_env_t* env, const char* filename, size_t filename_len, int line_offset, js_value_t* source, js_value_t** result) {
+    *result = (js_value_t*)0x9;
+    return 0;
+}
