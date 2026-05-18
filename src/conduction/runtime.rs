@@ -321,13 +321,24 @@ impl MantleRuntime {
 
 impl Drop for MantleRuntime {
     fn drop(&mut self) {
+        log::info!("Mantle Runtime Teardown: Enforcing strict memory lifecycle bounds...");
+        
+        // 1. First, explicitly dispose of the Bare/V8 handles
+        // This forces V8 to drop its ArrayBuffer views while the physical memory is still guaranteed alive
         let mut exit_code: c_int = 0;
         unsafe {
             bare_teardown(self.bare, uv_run_mode::UV_RUN_DEFAULT, &mut exit_code);
+        }
+        log::info!("Mantle Runtime Teardown: Bare instance cleanly dismantled.");
+
+        // 2. Allow Rust to proceed with dropping raw pointers/buffers naturally 
+        // Now that no external FFI entities hold handles to the substrate space
+        unsafe {
             let substrate_layout = std::alloc::Layout::from_size_align(self.substrate_size, 16).unwrap();
             std::alloc::dealloc(self.substrate_ptr, substrate_layout);
             let ledger_layout = std::alloc::Layout::from_size_align(self.ledger_size, 16).unwrap();
             std::alloc::dealloc(self.ledger_ptr, ledger_layout);
         }
+        log::info!("Mantle Runtime Teardown: Substrate backing store safe for deallocation.");
     }
 }

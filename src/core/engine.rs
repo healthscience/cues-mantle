@@ -150,13 +150,9 @@ impl Engine {
         if let Some(js) = &self.js_runtime {
             let substrate = js.read_substrate_floats();
             
-            // TEMPORARY SMOKE LOG
-            if substrate[0] != 0.0 || substrate[1] != 0.0 || substrate[2] != 0.0 || substrate[3] != 0.0 {
-                log::info!("Substrate Color Vector Read: {:?}", &substrate[0..4]);
-            }
-
             // If the alpha channel (slot 3) is set, we use the JS-driven color
             if substrate[3] > 0.0 {
+                log::info!("JS-Driven Clear Color Active: [{}, {}, {}, {}]", substrate[0], substrate[1], substrate[2], substrate[3]);
                 clear_color = wgpu::Color {
                     r: substrate[0] as f64,
                     g: substrate[1] as f64,
