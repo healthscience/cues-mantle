@@ -1,11 +1,11 @@
 #include <stdint.h>
 #include <stddef.h>
 
-typedef struct {} uv_loop_t;
-typedef struct {} bare_t;
-typedef struct {} js_env_t;
-typedef struct {} js_platform_t;
-typedef struct {} js_value_t;
+typedef struct { int dummy; } uv_loop_t;
+typedef struct { int dummy; } bare_t;
+typedef struct { int dummy; } js_env_t;
+typedef struct { int dummy; } js_platform_t;
+typedef struct { int dummy; } js_value_t;
 
 typedef enum {
     UV_RUN_DEFAULT = 0,
