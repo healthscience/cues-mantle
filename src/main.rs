@@ -2,8 +2,8 @@ use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::event_loop::{ControlFlow, EventLoop};
-use cues_mantle::core::engine::{Engine, TestMode};
-use cues_mantle::core::window::WindowSurface;
+use cues_mantle::orrery::hub::{Hub, TestMode};
+use cues_mantle::orrery::window::WindowSurface;
 use std::sync::mpsc::{channel, Receiver};
 use cues_mantle::conduction::clock::HeliRuntime;
 use cues_mantle::conduction::runtime::MantleRuntime;
@@ -17,7 +17,7 @@ struct RuntimeAssets {
 
 struct App {
     window_surface: Option<WindowSurface>,
-    engine: Option<Engine>,
+    hub: Option<Hub>,
     test_mode: TestMode,
     receiver: Option<Receiver<RuntimeAssets>>,
     impulse_tx: Option<std::sync::mpsc::Sender<String>>,
@@ -27,7 +27,7 @@ impl App {
     fn new(test_mode: TestMode) -> Self {
         Self {
             window_surface: None,
-            engine: None,
+            hub: None,
             test_mode,
             receiver: None,
             impulse_tx: None,
@@ -42,14 +42,14 @@ impl ApplicationHandler for App {
             self.window_surface = Some(window_surface);
 
             if let Some(ws) = &self.window_surface {
-                let mut engine = pollster::block_on(Engine::new(ws.window.clone(), self.test_mode));
+                let mut hub = pollster::block_on(Hub::new(ws.window.clone(), self.test_mode));
                 
                 // Define the Conduction Channel
                 let (itx, irx) = channel::<String>();
-                engine.impulse_rx = Some(irx);
+                hub.impulse_rx = Some(irx);
                 self.impulse_tx = Some(itx.clone());
                 
-                self.engine = Some(engine);
+                self.hub = Some(hub);
                 ws.window.request_redraw();
                 
                 // Spawn background loader
@@ -115,19 +115,19 @@ impl ApplicationHandler for App {
                 _event_loop.exit();
             }
             WindowEvent::Resized(physical_size) => {
-                if let Some(engine) = &mut self.engine {
-                    engine.resize(physical_size);
+                if let Some(hub) = &mut self.hub {
+                    hub.resize(physical_size);
                 }
                 if let Some(ws) = &self.window_surface {
                     ws.window.request_redraw();
                 }
             }
             WindowEvent::RedrawRequested => {
-                if let Some(engine) = &mut self.engine {
+                if let Some(hub) = &mut self.hub {
                     // log::debug!("Redraw Requested");
-                    match engine.render() {
+                    match hub.render() {
                         Ok(_) => {}
-                        Err(wgpu::SurfaceError::Lost) => engine.resize(engine.size),
+                        Err(wgpu::SurfaceError::Lost) => hub.resize(hub.size),
                         Err(wgpu::SurfaceError::OutOfMemory) => _event_loop.exit(),
                         Err(e) => log::error!("{:?}", e),
                     }
@@ -141,8 +141,8 @@ impl ApplicationHandler for App {
         // Check for background loader results
         if let Some(rx) = &self.receiver {
             if let Ok(assets) = rx.try_recv() {
-                if let Some(engine) = &mut self.engine {
-                    engine.activate(assets.heli, assets.js, assets.bridge);
+                if let Some(hub) = &mut self.hub {
+                    hub.activate(assets.heli, assets.js, assets.bridge);
                 }
                 self.receiver = None; // Loader finished
             }

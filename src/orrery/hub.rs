@@ -8,9 +8,11 @@ use chrono::Utc;
 use crate::conduction::clock::HeliRuntime;
 use crate::conduction::runtime::{MantleRuntime};
 use crate::conduction::bridge::{Bridge, Particle};
+use crate::orrery::alignment::HeliAlignment;
 use crate::render::pipeline::RenderPipeline;
 use crate::render::awakening::{AwakeningPass, LogoUniforms};
-use crate::{NETWORK_GENESIS_MS, TROPICAL_YEAR_MS};
+use crate::substrate::MemorySubstrate;
+use crate::substrate::schema::SubstrateSlot;
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum TestMode {
@@ -20,7 +22,7 @@ pub enum TestMode {
     SolarMidnight,
 }
 
-pub struct Engine {
+pub struct Hub {
     pub render_pipeline: RenderPipeline,
     pub size: winit::dpi::PhysicalSize<u32>,
     
@@ -45,7 +47,7 @@ pub struct Engine {
     pub impulse_rx: Option<std::sync::mpsc::Receiver<String>>,
 }
 
-impl Engine {
+impl Hub {
     pub async fn new(window: Arc<Window>, test_mode: TestMode) -> Self {
         let size = window.inner_size();
         let render_pipeline = RenderPipeline::new(window).await;
@@ -102,7 +104,7 @@ impl Engine {
         self.bridge = Some(bridge);
         self.particle_buffer = Some(particle_buffer);
         
-        log::info!("Engine Activated: Components integrated.");
+        log::info!("Orrery Hub Activated: Components integrated.");
     }
 
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
@@ -150,7 +152,7 @@ impl Engine {
             );
         }
 
-        let (solar_status, mut clear_color) = Self::get_solar_status(self.heli_runtime.as_mut(), self.test_mode);
+        let (solar_status, mut clear_color) = HeliAlignment::get_solar_status(self.heli_runtime.as_mut(), self.test_mode);
 
         // Override clear color if impulse file has set it via shared substrate buffer
         if let Some(js) = &self.js_runtime {
@@ -324,60 +326,5 @@ impl Engine {
         self.render_pipeline.queue.submit(std::iter::once(encoder.finish()));
         output.present();
         Ok(())
-    }
-
-    pub fn get_solar_status(heli: Option<&mut HeliRuntime>, test_mode: TestMode) -> (String, wgpu::Color) {
-        use crate::{NETWORK_GENESIS_MS, TROPICAL_YEAR_MS};
-        use chrono::Utc;
-
-        if heli.is_none() {
-            return (
-                "Cues Mantle | Age: ??? | Temporal Axis Initializing...".to_string(),
-                wgpu::Color { r: 0.05, g: 0.05, b: 0.1, a: 1.0 }
-            );
-        }
-        let heli = heli.unwrap();
-
-        let now = match test_mode {
-            TestMode::SolarNoon => NETWORK_GENESIS_MS, 
-            TestMode::SolarMidnight => NETWORK_GENESIS_MS + (12 * 3600 * 1000), 
-            TestMode::None => Utc::now().timestamp_millis(),
-        };
-        
-        let orbital_degree = heli.get_orbital_degree(now).unwrap_or(0.0);
-        let network_age = (now - NETWORK_GENESIS_MS) as f64 / TROPICAL_YEAR_MS;
-
-        let truth_lat = 0.0;
-        let truth_lon = 41.5; 
-        let zenith = heli.get_zenith_angle(truth_lat, truth_lon, now).unwrap_or(90.0);
-        
-        let is_day = zenith < 90.0;
-
-        let factor = (1.0f64 - (zenith / 180.0)).powi(2);
-        let background_color = if is_day {
-            wgpu::Color {
-                r: 0.1 * factor,
-                g: 0.4 * factor,
-                b: 0.9 * factor,
-                a: 1.0,
-            }
-        } else {
-            wgpu::Color {
-                r: 0.02 * factor,
-                g: 0.02 * factor,
-                b: 0.05 * factor,
-                a: 1.0,
-            }
-        };
-
-        let status = format!(
-            "Cues Mantle | Age: {:.8} | Degree: {:.4}° | Zenith: {:.2}° | {}",
-            network_age,
-            orbital_degree,
-            zenith,
-            if test_mode != TestMode::None { "TEST MODE" } else if is_day { "Day (Truth)" } else { "Night (Truth)" }
-        );
-
-        (status, background_color)
     }
 }

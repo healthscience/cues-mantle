@@ -1,3 +1,5 @@
+use crate::substrate::MemorySubstrate;
+use crate::substrate::schema::SubstrateSlot;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
@@ -103,10 +105,7 @@ pub struct MantleRuntime {
     bare: *mut bare_t,
     env: *mut js_env_t,
     uv_loop: *mut uv_loop_t,
-    substrate_ptr: *mut u8,
-    substrate_size: usize,
-    ledger_ptr: *mut u8,
-    ledger_size: usize,
+    substrate: MemorySubstrate,
     fuel_limit: u64,
 }
 
@@ -150,24 +149,13 @@ impl MantleRuntime {
             let hop_name = CString::new("hop").unwrap();
             js_set_named_property(env, global, hop_name.as_ptr(), hop);
 
-            // Gate 1: Initialize 16-byte aligned substrate memory
-            let substrate_size = 4096;
-            let substrate_layout = std::alloc::Layout::from_size_align(substrate_size, 16).unwrap();
-            let substrate_ptr = std::alloc::alloc_zeroed(substrate_layout);
-
-            // Task 2.4: Morphogenetic Sorting & Coherence Ledger
-            let ledger_size = 1024;
-            let ledger_layout = std::alloc::Layout::from_size_align(ledger_size, 16).unwrap();
-            let ledger_ptr = std::alloc::alloc_zeroed(ledger_layout);
+            let substrate = MemorySubstrate::new();
 
             let mut runtime = Self {
                 bare,
                 env,
                 uv_loop,
-                substrate_ptr,
-                substrate_size,
-                ledger_ptr,
-                ledger_size,
+                substrate,
                 fuel_limit: u64::MAX,
             };
 
@@ -180,8 +168,8 @@ impl MantleRuntime {
             let mut substrate_array_buffer: *mut js_value_t = ptr::null_mut();
             js_create_external_arraybuffer(
                 env,
-                substrate_ptr as *mut c_void,
-                substrate_size,
+                runtime.substrate.main.ptr as *mut c_void,
+                runtime.substrate.main.size,
                 ptr::null(),
                 ptr::null_mut(),
                 &mut substrate_array_buffer,
@@ -194,8 +182,8 @@ impl MantleRuntime {
             let mut ledger_array_buffer: *mut js_value_t = ptr::null_mut();
             js_create_external_arraybuffer(
                 env,
-                ledger_ptr as *mut c_void,
-                ledger_size,
+                runtime.substrate.ledger.ptr as *mut c_void,
+                runtime.substrate.ledger.size,
                 ptr::null(),
                 ptr::null_mut(),
                 &mut ledger_array_buffer,
@@ -205,43 +193,44 @@ impl MantleRuntime {
             js_set_named_property(env, buffers, ledger_name.as_ptr(), ledger_array_buffer);
 
             // Wire the JS-side Plumbing for hop.render.setClearColor and setLogoLayout
-            let bootstrap_js = r#"
-                (function() {
+            let bootstrap_js = format!(r#"
+                (function() {{
                     const substrateView = new Float32Array(hop.buffers.substrate);
-                    hop.render = {
-                        setClearColor: (r, g, b, a) => {
-                            substrateView[0] = r;
-                            substrateView[1] = g;
-                            substrateView[2] = b;
-                            substrateView[3] = a;
-                        },
-                        setLogoLayout: (x, y, w, h) => {
-                            substrateView[4] = x;
-                            substrateView[5] = y;
-                            substrateView[6] = w;
-                            substrateView[7] = h;
-                        }
-                    };
-                })();
-            "#;
-            runtime.execute_string(bootstrap_js).ok();
+                    hop.render = {{
+                        setClearColor: (r, g, b, a) => {{
+                            substrateView[{}] = r;
+                            substrateView[{}] = g;
+                            substrateView[{}] = b;
+                            substrateView[{}] = a;
+                        }},
+                        setLogoLayout: (x, y, w, h) => {{
+                            substrateView[{}] = x;
+                            substrateView[{}] = y;
+                            substrateView[{}] = w;
+                            substrateView[{}] = h;
+                        }}
+                    }};
+                }})();
+            "#, 
+                SubstrateSlot::ClearColorR.index(), SubstrateSlot::ClearColorG.index(), SubstrateSlot::ClearColorB.index(), SubstrateSlot::ClearColorA.index(),
+                SubstrateSlot::LogoOriginX.index(), SubstrateSlot::LogoOriginY.index(), SubstrateSlot::LogoScaleW.index(), SubstrateSlot::LogoScaleH.index()
+            );
+            runtime.execute_string(&bootstrap_js).ok();
 
             Ok(runtime)
         }
     }
 
     pub fn get_substrate_ptr(&self) -> *mut u8 {
-        self.substrate_ptr
+        self.substrate.main.ptr
     }
 
     pub fn get_substrate_size(&self) -> usize {
-        self.substrate_size
+        self.substrate.main.size
     }
 
     pub fn read_substrate_floats(&self) -> &[f32] {
-        unsafe {
-            std::slice::from_raw_parts(self.substrate_ptr as *const f32, self.substrate_size / 4)
-        }
+        self.substrate.main.as_slice()
     }
 
     pub fn execute_string(&mut self, source: &str) -> anyhow::Result<()> {
@@ -339,12 +328,6 @@ impl Drop for MantleRuntime {
 
         // 2. Allow Rust to proceed with dropping raw pointers/buffers naturally 
         // Now that no external FFI entities hold handles to the substrate space
-        unsafe {
-            let substrate_layout = std::alloc::Layout::from_size_align(self.substrate_size, 16).unwrap();
-            std::alloc::dealloc(self.substrate_ptr, substrate_layout);
-            let ledger_layout = std::alloc::Layout::from_size_align(self.ledger_size, 16).unwrap();
-            std::alloc::dealloc(self.ledger_ptr, ledger_layout);
-        }
         log::info!("Mantle Runtime Teardown: Substrate backing store safe for deallocation.");
     }
 }
