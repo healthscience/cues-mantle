@@ -1,6 +1,6 @@
 [package]
 name = "cues-mantle"
-version = "0.1.5"
+version = "0.1.7"
 edition = "2021"
 repository = "https://github.com/healthscience/cues-mantle"
 
@@ -10,6 +10,7 @@ wgpu = "23.0"
 pollster = "0.3"
 glyphon = "0.7"
 cosmic-text = "0.12"
+image = "0.25.1"
 env_logger = "0.11"
 log = "0.4"
 chrono = "0.4"

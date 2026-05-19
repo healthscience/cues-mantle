@@ -204,7 +204,7 @@ impl MantleRuntime {
             let ledger_name = CString::new("ledger").unwrap();
             js_set_named_property(env, buffers, ledger_name.as_ptr(), ledger_array_buffer);
 
-            // Wire the JS-side Plumbing for hop.render.setClearColor
+            // Wire the JS-side Plumbing for hop.render.setClearColor and setLogoLayout
             let bootstrap_js = r#"
                 (function() {
                     const substrateView = new Float32Array(hop.buffers.substrate);
@@ -214,6 +214,12 @@ impl MantleRuntime {
                             substrateView[1] = g;
                             substrateView[2] = b;
                             substrateView[3] = a;
+                        },
+                        setLogoLayout: (x, y, w, h) => {
+                            substrateView[4] = x;
+                            substrateView[5] = y;
+                            substrateView[6] = w;
+                            substrateView[7] = h;
                         }
                     };
                 })();

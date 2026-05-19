@@ -9,6 +9,7 @@ use crate::conduction::clock::HeliRuntime;
 use crate::conduction::runtime::{MantleRuntime};
 use crate::conduction::bridge::{Bridge, Particle};
 use crate::render::pipeline::RenderPipeline;
+use crate::render::awakening::{AwakeningPass, LogoUniforms};
 use crate::{NETWORK_GENESIS_MS, TROPICAL_YEAR_MS};
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -30,6 +31,8 @@ pub struct Engine {
     pub atlas: TextAtlas,
     pub text_renderer: TextRenderer,
     pub text_buffer: Buffer,
+
+    pub awakening_pass: AwakeningPass,
 
     // Conduction (now optional for instant startup)
     pub heli_runtime: Option<HeliRuntime>,
@@ -56,6 +59,8 @@ impl Engine {
         let text_renderer = TextRenderer::new(&mut atlas, &render_pipeline.device, Default::default(), None);
         let mut text_buffer = Buffer::new(&mut font_system, Metrics::new(32.0, 42.0));
 
+        let awakening_pass = AwakeningPass::new(&render_pipeline);
+
         // Initial placeholder text for instant feedback
         text_buffer.set_size(&mut font_system, Some(size.width as f32), Some(size.height as f32));
         text_buffer.set_text(&mut font_system, "bring to be ...", glyphon::Attrs::new().family(glyphon::Family::SansSerif), cosmic_text::Shaping::Advanced);
@@ -70,6 +75,7 @@ impl Engine {
             atlas,
             text_renderer,
             text_buffer,
+            awakening_pass,
             heli_runtime: None, 
             js_runtime: None,
             bridge: None,
@@ -160,6 +166,26 @@ impl Engine {
                     a: substrate[3] as f64,
                 };
             }
+
+            // Update Awakening Logo Uniforms from substrate slots [4..7]
+            // Default values if not set (0.0 usually means not set by JS yet, but specification says defaults are 0.0, -0.2, 0.25, 0.25)
+            // We'll check if Logo Scale W is > 0.0 to assume JS has initialized it.
+            if substrate[6] > 0.0 {
+                self.awakening_pass.update_uniforms(&self.render_pipeline.queue, LogoUniforms {
+                    origin: [substrate[4], substrate[5]],
+                    scale: [substrate[6], substrate[7]],
+                    screen_size: [self.size.width as f32, self.size.height as f32],
+                    tex_size: [self.awakening_pass.tex_width, self.awakening_pass.tex_height],
+                });
+            } else {
+                // Keep default aspect ratio correction even if JS hasn't touched it
+                self.awakening_pass.update_uniforms(&self.render_pipeline.queue, LogoUniforms {
+                    origin: [0.0, -0.2],
+                    scale: [0.25, 0.25],
+                    screen_size: [self.size.width as f32, self.size.height as f32],
+                    tex_size: [self.awakening_pass.tex_width, self.awakening_pass.tex_height],
+                });
+            }
         }
 
         let output = self.render_pipeline.surface.get_current_texture()?;
@@ -216,6 +242,9 @@ impl Engine {
             ).unwrap();
 
             self.text_renderer.render(&self.atlas, &self.viewport, &mut render_pass).unwrap();
+
+            // Render Awakening UI (Logo)
+            self.awakening_pass.render(&mut render_pass);
         }
 
         self.render_pipeline.queue.submit(std::iter::once(encoder.finish()));
@@ -280,6 +309,16 @@ impl Engine {
             ).unwrap();
 
             self.text_renderer.render(&self.atlas, &self.viewport, &mut render_pass).unwrap();
+
+            // Render Awakening UI (Logo)
+            // Ensure aspect ratio is correct during boot too
+            self.awakening_pass.update_uniforms(&self.render_pipeline.queue, LogoUniforms {
+                origin: [0.0, -0.2],
+                scale: [0.25, 0.25],
+                screen_size: [self.size.width as f32, self.size.height as f32],
+                tex_size: [self.awakening_pass.tex_width, self.awakening_pass.tex_height],
+            });
+            self.awakening_pass.render(&mut render_pass);
         }
 
         self.render_pipeline.queue.submit(std::iter::once(encoder.finish()));
