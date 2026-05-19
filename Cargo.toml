@@ -1,6 +1,6 @@
 [package]
 name = "cues-mantle"
-version = "0.1.9"
+version = "0.2.0"
 edition = "2021"
 repository = "https://github.com/healthscience/cues-mantle"
 
@@ -22,3 +22,8 @@ bytemuck = { version = "1.16", features = ["derive"] }
 # The profile that 'dist' will build with
 [build-dependencies]
 cc = "1.0"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
